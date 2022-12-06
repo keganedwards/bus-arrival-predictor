@@ -13,7 +13,6 @@ import concurrent.futures
 import os
 
 pd.options.mode.chained_assignment = None
-firstTimeRun = True
 # seconds to milliseconds
 secondsToMilliseconds: int = 1000
 cluster = MongoClient(os.environ["mongoCredential"])
@@ -202,7 +201,8 @@ def filterTimeOutliers(timings, distanceBetweenStops):
             ~timings['routeId'].isin(excludedRoutes))]
         if toFromStopDf.empty:
             continue
-        q1, q3 = np.percentile(toFromStopDf['timeTaken'], [25, 75])
+        # we need a smaller range than the typical 25,75
+        q1, q3 = np.percentile(toFromStopDf['timeTaken'], [30, 70])
         iqr = q3 - q1
         filtUl = toFromStopDf['timeTaken'] < (q3 + (0.5 * iqr))
         filtLl = toFromStopDf['timeTaken'] > (q1 - (0.5 * iqr))
@@ -222,12 +222,12 @@ def makeGroupBy(filteredTimingsDf):
     globalTimeGBDf = filteredTimingsDf.groupby(['fromStop', 'toStop'], as_index=False, dropna=False)[
         ['timeTaken']].median()
     timeByHourGBDf = \
-    filteredTimingsDf.groupby(['fromStop', 'toStop', 'hourOfDay', 'dayOfWeek'], as_index=False, dropna=False)[
-        'timeTaken'].median()
+        filteredTimingsDf.groupby(['fromStop', 'toStop', 'hourOfDay', 'dayOfWeek'], as_index=False, dropna=False)[
+            'timeTaken'].median()
     return timeByHourGBDf, globalTimeGBDf
 
 
-def timingsToDb(timeByHourGBDf):
+def timingsToDb():
     collection = db['averageTimingsBetweenStops']
     collection.delete_many({})
     collection.insert_many(timeByHourGBDf.to_dict('records'))
@@ -244,7 +244,7 @@ def processStopGroupBy():
     return
 
 
-def tryStopGroupBy(timingsDf):
+def tryDownloadingDistancesGroupBy(timingsDf):
     # checking to make sure that dist exists
     try:
         # returns global vars
@@ -337,29 +337,27 @@ def nextStop(df, timingsCalled=False):
 
 def combineWithPreviousRuns(allDataDf, previousBusesDf, allDataPrevIndex, firstIndexCond):
     # making sure it's not empty
+    # if busnumber and timestamp are the same, we can set the columns from the previous run equal
     if not previousBusesDf.empty and allDataDf['busNumber'] not in newBusesList and previousBusesDf.loc[
         (allDataDf['busNumber']), 'lastUpdated'] == allDataDf['lastUpdated']:
-        # if busnumber and timestamp are the same, we can set the columns from the previous run equal
-        if allDataDf['busNumber'] not in newBusesList and previousBusesDf.loc[
-            (allDataDf['busNumber']), 'lastUpdated'] == allDataDf['lastUpdated']:
-            allDataDf['currentStop'] = previousBusesDf.loc[(allDataDf['busNumber']), 'currentStop']
-            allDataDf['combined'] = True
-            if firstIndexCond:
-                allDataDf['timeFromStop'] = previousBusesDf.loc[(allDataDf['busNumber']), 'timeFromStop']
-                allDataDf['distanceFromStop'] = previousBusesDf.loc[(allDataDf['busNumber']), 'distanceFromStop']
-                allDataDf['timeDiff'] = previousBusesDf.loc[(allDataDf['busNumber']), 'timeDiff']
-                allDataDf['distDiff'] = previousBusesDf.loc[(allDataDf['busNumber']), 'distDiff']
-            else:
-                # pass in current timestamps cord and previous time stamps cord to distance function
-                allDataDf['distDiff'] = distanceBetweenPoints(allDataDf['lng'], allDataPrevIndex['lng'],
-                                                              allDataDf['lat'], allDataPrevIndex['lat'])
-                # time diff is the difference between the ith and the index-1 timestamp
-                allDataDf['timeDiff'] = (((allDataPrevIndex['lastUpdated'] - allDataDf[
-                    'lastUpdated']).total_seconds()) * secondsToMilliseconds)
-                allDataDf['timeFromStop'] = allDataPrevIndex['timeFromStop'] + allDataDf['timeDiff'] + \
-                                            previousBusesDf.loc[(allDataDf['busNumber']), 'timeFromStop']
-                allDataDf['distanceFromStop'] = allDataPrevIndex['distanceFromStop'] + allDataDf['distDiff'] + \
-                                                previousBusesDf.loc[(allDataDf['busNumber']), 'distanceFromStop']
+        allDataDf['currentStop'] = previousBusesDf.loc[(allDataDf['busNumber']), 'currentStop']
+        allDataDf['combined'] = True
+        if firstIndexCond:
+            allDataDf['timeFromStop'] = previousBusesDf.loc[(allDataDf['busNumber']), 'timeFromStop']
+            allDataDf['distanceFromStop'] = previousBusesDf.loc[(allDataDf['busNumber']), 'distanceFromStop']
+            allDataDf['timeDiff'] = previousBusesDf.loc[(allDataDf['busNumber']), 'timeDiff']
+            allDataDf['distDiff'] = previousBusesDf.loc[(allDataDf['busNumber']), 'distDiff']
+        else:
+            # pass in current timestamps cord and previous time stamps cord to distance function
+            allDataDf['distDiff'] = distanceBetweenPoints(allDataDf['lng'], allDataPrevIndex['lng'],
+                                                          allDataDf['lat'], allDataPrevIndex['lat'])
+            # time diff is the difference between the ith and the index-1 timestamp
+            allDataDf['timeDiff'] = (((allDataPrevIndex['lastUpdated'] - allDataDf[
+                'lastUpdated']).total_seconds()) * secondsToMilliseconds)
+            allDataDf['timeFromStop'] = allDataPrevIndex['timeFromStop'] + allDataDf['timeDiff'] + \
+                                        previousBusesDf.loc[(allDataDf['busNumber']), 'timeFromStop']
+            allDataDf['distanceFromStop'] = allDataPrevIndex['distanceFromStop'] + allDataDf['distDiff'] + \
+                                            previousBusesDf.loc[(allDataDf['busNumber']), 'distanceFromStop']
     return allDataDf
 
 
@@ -394,7 +392,7 @@ def finalRelaventTimeStamp(df, dfFirstIndexOfBus, newBusPreviousIndex=False):
     return df
 
 
-def findBusInformation(allDataDf, previousBusesDf):
+def findBusInformation(allDataDf, previousBusesDf, firstTimeRun):
     # buses added since the last running
     global newBusesList
     # this is a df of the most recent instance of all buses to be used as reference for future runs
@@ -535,7 +533,8 @@ def prevStopToTargetStop(busRoute, targetStop, lastUpdated, timeFromStop, stopsL
     while previousIndex < targetIndex:
         # we are looking in our historical data for the median amount of time for from PI to PI +1
         avgTimeToTarget += (
-        globalTimeGBDf.loc[(routesDict[busRoute][previousIndex], routesDict[busRoute][previousIndex + 1]), 'timeTaken'])
+            globalTimeGBDf.loc[
+                (routesDict[busRoute][previousIndex], routesDict[busRoute][previousIndex + 1]), 'timeTaken'])
         distToTarget += (distGBDf.loc[
             (routesDict[busRoute][previousIndex], routesDict[busRoute][previousIndex + 1]), 'distBetweenStops'])
         timeToTarget += (timeByHourGBDf.loc[(routesDict[busRoute][previousIndex],
@@ -593,9 +592,9 @@ def timesToMongoDb(timeMapList):
 
 
 def main():
-    global firstTimeRun, timeByHourGBDF, globalTimeGBDF
     previousBusesDf = None
     numRecords = 5000
+    firstTimeRun: bool = True
     while True:
         with concurrent.futures.ThreadPoolExecutor() as executor:
             if firstTimeRun:
@@ -607,24 +606,28 @@ def main():
                 thread2.result()
                 uniqueCombinations = uniqueStopsCombinations(timingsDf)
                 filteredTimingsDf = filterTimeOutliers(timingsDf, uniqueCombinations)
-                timeByHourGBDF, globalTimeGBDF = makeGroupBy(filteredTimingsDf)
-                timingsToDb(timeByHourGBDF)
-                thread4 = executor.submit(findRoutesPerStop)
-                thread5 = executor.submit(tryStopGroupBy, filteredTimingsDf)
+                # makes global groupBy variables
+                thread1 = executor.submit(makeGroupBy, filteredTimingsDf)
+                thread2 = executor.submit(findRoutesPerStop)
+                thread1.result()
+                thread1 = executor.submit(tryDownloadingDistancesGroupBy, filteredTimingsDf)
+                thread4 = executor.submit(timingsToDb)
             else:
                 thread3 = executor.submit(callInData, numRecords)
             allDataDf = thread3.result()
             allDataDf = prepareData(allDataDf)
-            repeatedBusesDf = findBusInformation(allDataDf, previousBusesDf)
+            repeatedBusesDf = findBusInformation(allDataDf, previousBusesDf, firstTimeRun)
             repeatedBusesDf, previousBusesDf = processDistanceData(repeatedBusesDf)
-            allRoutesThatGoToStopsMap = thread4.result()
+            allRoutesThatGoToStopsMap = thread2.result()
             fastestBusMap = fastestBus(repeatedBusesDf, allRoutesThatGoToStopsMap)
+            # returns routesPerStop
+            thread2.result()
             # returns stopGroupBy
-            thread5.result()
+            thread1.result()
             allStopsMapList = calculateTimeLeft(fastestBusMap)
             timesToMongoDb(allStopsMapList)
-            print(allStopsMapList)
             firstTimeRun = False
+            thread4.result()
 
 
 if __name__ == "__main__":
