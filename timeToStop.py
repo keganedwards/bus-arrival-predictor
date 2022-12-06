@@ -1,8 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
 from datetime import timedelta
-from typing import List
-
 import pandas as pd
 from geopy import distance
 from pymongo import MongoClient
@@ -509,14 +507,21 @@ def fastestBus(repeatedBusesDf, allRoutesThatGoToStops):
                                                                                     row['lat']]
                     else:
                         if fastestBusMap[(key, allRoutesThatGoToStops[key][value])][4] > stopsAway:
-                            if fastestBusMap[(key, allRoutesThatGoToStops[key][value])][4] == stopsAway and \
-                                    fastestBusMap[(key, allRoutesThatGoToStops[key][value])][5] < row['timeFromStop']:
-                                fastestBusMap[(key, allRoutesThatGoToStops[key][value])] = [index, key,
-                                                                                            row['lastUpdated'],
-                                                                                            row['timeFromStop'],
-                                                                                            stopsAway,
-                                                                                            row['distanceFromStop'],
-                                                                                            row['lng'], row['lat']]
+                            fastestBusMap[(key, allRoutesThatGoToStops[key][value])] = [index, key,
+                                                                                        row['lastUpdated'],
+                                                                                        row['timeFromStop'],
+                                                                                        stopsAway,
+                                                                                        row['distanceFromStop'],
+                                                                                        row['lng'], row['lat']]
+                        if fastestBusMap[(key, allRoutesThatGoToStops[key][value])][4] == stopsAway and \
+                                fastestBusMap[(key, allRoutesThatGoToStops[key][value])][5] < row['timeFromStop']:
+                            fastestBusMap[(key, allRoutesThatGoToStops[key][value])] = [index, key,
+                                                                                        row['lastUpdated'],
+                                                                                        row['timeFromStop'],
+                                                                                        stopsAway,
+                                                                                        row['distanceFromStop'],
+                                                                                        row['lng'], row['lat']]
+
     return fastestBusMap
 
 
