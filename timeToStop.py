@@ -501,7 +501,7 @@ def prevStopToTargetStop(busRoute, targetStop, currentStop, lastUpdated, timeFro
     hourOfDay = lastUpdated.floor("H").hour
     dayOfWeek = lastUpdated.day_name()
     # the point we are coming from
-    previousIndex = targetIndex - stopsLeft - 1
+    previousIndex = targetIndex - stopsLeft
     while previousIndex < targetIndex:
         # we are looking in our historical data for the median amount of time for from PI to PI +1
         avgTimeToTarget += (globalTimeGBDf.loc[(routesDict[busRoute][previousIndex], routesDict[busRoute][previousIndex + 1]), 'timeTaken'])
