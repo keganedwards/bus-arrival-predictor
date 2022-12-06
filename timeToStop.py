@@ -9,15 +9,13 @@ import numpy as np
 import requests
 import concurrent.futures
 import os
-
 pd.options.mode.chained_assignment = None
 # seconds to milliseconds
 secondsToMilliseconds: int = 1000
 cluster = MongoClient(os.environ["mongoCredential"])
 db = cluster['busforce']
-feetToMiles: float = (1 / 5280)
+feetToMiles: float = 0.000189
 # conversion from passio radius to something more practical
-passioRadiusTooBig: float = (1 / 2)
 timeTooLong: int = 60000
 excludedRoutes: list[int] = [26294]
 
@@ -302,8 +300,7 @@ def isItAStop(df):
             # routes[route][stop] is a stop, it is the index of stop
             if (distanceBetweenPoints(df['lng'], stopsInfoDf.loc[(routesDict[df['routeId']][stops]), 'longitude'],
                                       df['lat'], stopsInfoDf.loc[(routesDict[df['routeId']][stops]), 'latitude']) <= (
-                    (stopsInfoDf.loc[(routesDict[df['routeId']][stops]), 'radius']) * (
-                    feetToMiles * passioRadiusTooBig))):
+                    (stopsInfoDf.loc[(routesDict[df['routeId']][stops]), 'radius']) * feetToMiles)):
                 # set the stop column equal to value of the stop at index stops
                 potentialStop = routesDict[df['routeId']][stops]
                 break
@@ -631,6 +628,8 @@ def main():
             timesToMongoDb(allStopsMapList)
             firstTimeRun = False
             thread4.result()
+
+            print(allStopsMapList)
 
 
 if __name__ == "__main__":
