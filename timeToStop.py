@@ -9,6 +9,7 @@ import numpy as np
 import requests
 import concurrent.futures
 import os
+
 pd.options.mode.chained_assignment = None
 # seconds to milliseconds
 secondsToMilliseconds: int = 1000
@@ -17,7 +18,7 @@ db = cluster['busforce']
 feetToMiles: float = 0.000189
 # conversion from passio radius to something more practical
 timeTooLong: int = 60000
-excludedRoutes: list[int] = [26294]
+excludedRoutes: list[int] = [26294, 3406]
 
 
 def getRoutesAndStops():
@@ -197,13 +198,10 @@ def filterTimeOutliers(timings, distanceBetweenStops):
             ~timings['routeId'].isin(excludedRoutes))]
         if toFromStopDf.empty:
             continue
-        # we need a smaller range than the typical 25,75 * 1.5*iqr
-        q1, q3 = np.percentile(toFromStopDf['timeTaken'], [25, 75])
-        filtUl = toFromStopDf['timeTaken'] < q3
-        filtLl = toFromStopDf['timeTaken'] > q1
-        toFromStopDf = toFromStopDf[filtUl]
-        toFromStopDf = toFromStopDf[filtLl]
-        timingsDfsList.append(toFromStopDf)
+        lowerLimitPercentile, upperLimitPercentile = 25, 70
+        timingsDfsList.append(
+            toFromStopDf[(toFromStopDf['timeTaken'] < np.percentile(toFromStopDf['timeTaken'], upperLimitPercentile)) &
+                         (toFromStopDf['timeTaken'] > np.percentile(toFromStopDf['timeTaken'], lowerLimitPercentile))])
     # after taking out outliers, recombine
     filteredTimingsDf = pd.concat(timingsDfsList)
     filteredTimingsDf.reset_index(inplace=True, drop=True)
