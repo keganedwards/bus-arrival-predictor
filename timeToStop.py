@@ -201,11 +201,10 @@ def filterTimeOutliers(timings, distanceBetweenStops):
             ~timings['routeId'].isin(excludedRoutes))]
         if toFromStopDf.empty:
             continue
-        # we need a smaller range than the typical 25,75
-        q1, q3 = np.percentile(toFromStopDf['timeTaken'], [30, 70])
-        iqr = q3 - q1
-        filtUl = toFromStopDf['timeTaken'] < (q3 + (0.5 * iqr))
-        filtLl = toFromStopDf['timeTaken'] > (q1 - (0.5 * iqr))
+        # we need a smaller range than the typical 25,75 * 1.5*iqr
+        q1, q3 = np.percentile(toFromStopDf['timeTaken'], [25, 75])
+        filtUl = toFromStopDf['timeTaken'] < q3
+        filtLl = toFromStopDf['timeTaken'] > q1
         toFromStopDf = toFromStopDf[filtUl]
         toFromStopDf = toFromStopDf[filtLl]
         timingsDfsList.append(toFromStopDf)
@@ -627,8 +626,6 @@ def main():
             timesToMongoDb(allStopsMapList)
             firstTimeRun = False
             thread4.result()
-
-            print(allStopsMapList)
 
 
 if __name__ == "__main__":
