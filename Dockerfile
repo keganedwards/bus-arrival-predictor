@@ -8,6 +8,7 @@ RUN apk add --no-cache --update \
     libjpeg-turbo-dev zlib-dev
    
 ADD requirements.txt /
-RUN pip install -r requirements.txt
+RUN python3 -m ensurepip --upgrade
+RUN pip3 install -r requirements.txt
 ADD timeToStop.py /
-CMD [ "python", "./timeToStop.py" ]
+CMD [ "python3", "./timeToStop.py" ]
