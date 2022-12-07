@@ -1,4 +1,4 @@
-FROM python:3.6.5-alpine3.7
+FROM python:3.11.0-alpine3.17
 RUN apk add --no-cache --update \
     python3 python3-dev gcc \
     gfortran musl-dev g++ \
@@ -6,6 +6,7 @@ RUN apk add --no-cache --update \
     libxml2 libxml2-dev \
     libxslt libxslt-dev \
     libjpeg-turbo-dev zlib-dev
+   
 ADD requirements.txt /
 RUN pip install -r requirements.txt
 ADD timeToStop.py /
