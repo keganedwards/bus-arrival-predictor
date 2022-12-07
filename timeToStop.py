@@ -459,10 +459,12 @@ def processDistanceData(repeatedBusesDf):
             if repeatedBusesDf.loc[bus, 'distanceFromStop'] <= stopsInfoDf.loc[
                 (repeatedBusesDf.loc[(bus, 'fromStop')]), 'radius']:
                 repeatedBusesDf['currentStop'][bus] = repeatedBusesDf['fromStop'][bus]
+        # if one of the fromStops is null
         finally:
-            repeatedBusesDf.set_index('routeId', inplace=True)
-            previousBusesDf.set_index('busNumber', inplace=True)
-            return repeatedBusesDf, previousBusesDf
+            continue
+    repeatedBusesDf.set_index('routeId', inplace=True)
+    previousBusesDf.set_index('busNumber', inplace=True)
+    return repeatedBusesDf, previousBusesDf
 
 
 def findRoutesPerStop():
@@ -652,7 +654,7 @@ def main():
             timesToMongoDb(allStopsMapList)
             firstTimeRun = False
             thread4.result()
-            
+
 
 if __name__ == "__main__":
     main()
