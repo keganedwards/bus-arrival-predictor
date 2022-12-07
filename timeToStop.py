@@ -15,7 +15,6 @@ pd.options.mode.chained_assignment = None
 secondsToMilliseconds: int = 1000
 cluster = MongoClient(os.environ["mongoCredential"])
 db = cluster['busforce']
-feetToMiles: float = 0.000189
 # conversion from passio radius to something more practical
 timeTooLong: int = 60000
 excludedRoutes: list[int] = [26294, 3406]
@@ -54,10 +53,10 @@ class stopTimingsAndDistances:
         if pd.notnull(prevStopIndex):
             # calc toStop
             entireDf['toStop'][value] = nextStop(entireDf.loc[value])
-            if entireDf['currentStop'][value] != entireDf['currentStop'][value - 1]:
+            if entireDf['fromStop'][value] != entireDf['fromStop'][value - 1]:
                 # append distance value
                 try:
-                    distanceBetweenStops[(entireDf['currentStop'][value], entireDf['toStop'][value])].append(
+                    distanceBetweenStops[(entireDf['fromStop'][value], entireDf['toStop'][value])].append(
                         entireDf['distanceBetweenStops'][value])
                 finally:
                     prevStopIndex = value
@@ -74,12 +73,12 @@ class stopTimingsAndDistances:
                 entireDf.loc[value] = resetData(entireDf.loc[value])
                 continue
             # classify if stop
-            entireDf['currentStop'][value] = isItAStop(entireDf.loc[value])
+            entireDf['fromStop'][value] = isItAStop(entireDf.loc[value])
             # 0 cond
             if value == 0:
                 entireDf.loc[value] = resetData(entireDf.loc[value])
                 # timestamp is a stop, reset
-                if pd.notnull(entireDf['currentStop'][value]):
+                if pd.notnull(entireDf['fromStop'][value]):
                     entireDf, filteredTimingsDf, prevStopIndex, distanceBetweenStops = self.atAStopUpdate(entireDf,
                                                                                                           value,
                                                                                                           prevStopIndex,
@@ -107,7 +106,7 @@ class stopTimingsAndDistances:
                         prevStopIndex = None
                     entireDf.loc[value] = distTimeFromLastStop(entireDf.loc[value], entireDf.loc[value - 1])
             # timestamp is a stop
-            if pd.notnull(entireDf['currentStop'][value]):
+            if pd.notnull(entireDf['fromStop'][value]):
                 entireDf, filteredTimingsDf, prevStopIndex, distanceBetweenStops = self.atAStopUpdate(entireDf, value,
                                                                                                       prevStopIndex,
                                                                                                       filteredTimingsDf,
@@ -274,11 +273,13 @@ def prepareData(allDataDf):
     # this is the Dist the bus has traveled since it was last at a stop
     allDataDf['distanceFromStop'] = [None] * len(allDataDf.index)
     allDataDf['speedFromStop'] = [None] * len(allDataDf.index)
+    allDataDf['fromStop'] = [None] * len(allDataDf.index)
     allDataDf['currentStop'] = [None] * len(allDataDf.index)
     allDataDf['toStop'] = [None] * len(allDataDf.index)
     allDataDf['timeFromStop'] = np.empty(len(allDataDf.index), dtype=np.float64)
     allDataDf['newBus'] = [False] * len(allDataDf.index)
     allDataDf['newBus'][0] = True
+
     allDataDf.sort_values(by=['busNumber', 'lastUpdated'], ascending=False, ignore_index=True, inplace=True)
     uniqueBusesList = pd.unique(allDataDf['busNumber'])
     return allDataDf
@@ -287,7 +288,7 @@ def prepareData(allDataDf):
 def distanceBetweenPoints(lng1, lng2, lat1, lat2):
     point1 = [lng1, lat1]
     point2 = [lng2, lat2]
-    return distance.distance(point1, point2).miles
+    return distance.distance(point1, point2).feet
 
 
 def isItAStop(df):
@@ -298,7 +299,7 @@ def isItAStop(df):
             # routes[route][stop] is a stop, it is the index of stop
             if (distanceBetweenPoints(df['lng'], stopsInfoDf.loc[(routesDict[df['routeId']][stops]), 'longitude'],
                                       df['lat'], stopsInfoDf.loc[(routesDict[df['routeId']][stops]), 'latitude']) <= (
-                    (stopsInfoDf.loc[(routesDict[df['routeId']][stops]), 'radius']) * feetToMiles)):
+                    (stopsInfoDf.loc[(routesDict[df['routeId']][stops]), 'radius']))):
                 # set the stop column equal to value of the stop at index stops
                 potentialStop = routesDict[df['routeId']][stops]
                 break
@@ -308,8 +309,8 @@ def isItAStop(df):
 def nextStop(df, timingsCalled=False):
     # when it is called by allDataDf
     if not timingsCalled:
-        if (routesDict[df['routeId']].index(df['currentStop']) + 2) <= len(routesDict[df['routeId']]):
-            nextStopString = routesDict[df['routeId']][routesDict[df['routeId']].index(df['currentStop']) + 1]
+        if (routesDict[df['routeId']].index(df['fromStop']) + 2) <= len(routesDict[df['routeId']]):
+            nextStopString = routesDict[df['routeId']][routesDict[df['routeId']].index(df['fromStop']) + 1]
         else:
             nextStopString = routesDict[df['routeId']][0]
     # this is for when this function is called by timingsDf
@@ -332,7 +333,7 @@ def combineWithPreviousRuns(allDataDf, previousBusesDf, allDataPrevIndex, firstI
     # if busnumber and timestamp are the same, we can set the columns from the previous run equal
     if not previousBusesDf.empty and allDataDf['busNumber'] not in newBusesList and previousBusesDf.loc[
         (allDataDf['busNumber']), 'lastUpdated'] == allDataDf['lastUpdated']:
-        allDataDf['currentStop'] = previousBusesDf.loc[(allDataDf['busNumber']), 'currentStop']
+        allDataDf['fromStop'] = previousBusesDf.loc[(allDataDf['busNumber']), 'fromStop']
         allDataDf['combined'] = True
         if firstIndexCond:
             allDataDf['timeFromStop'] = previousBusesDf.loc[(allDataDf['busNumber']), 'timeFromStop']
@@ -370,13 +371,13 @@ def distTimeFromLastStop(df, dfMinus1):
     return df
 
 
-def finalRelaventTimeStamp(df, dfFirstIndexOfBus, newBusPreviousIndex=False):
+def finalRelevantTimeStamp(df, dfFirstIndexOfBus, newBusPreviousIndex=False):
     # this happens in the case that we never arrive at a stop, but we run into a new bus
     if newBusPreviousIndex:
         df['toStop'] = None
     else:
         # newbus cond
-        if pd.isnull(df['currentStop']):
+        if pd.isnull(df['fromStop']):
             df['toStop'] = None
         else:
             df['toStop'] = nextStop(df)
@@ -402,31 +403,32 @@ def findBusInformation(allDataDf, previousBusesDf, firstTimeRun):
             if index == 0:
                 allDataDf.loc[index] = combineWithPreviousRuns(allDataDf.loc[index], previousBusesDf, None, True)
             else:
-                if allDataDf['busNumber'][index] == allDataDf['busNumber'][index - 1]:
+                if allDataDf['busNumber'][index] != allDataDf['busNumber'][index - 1]:
+                    allDataDf.loc[index] = combineWithPreviousRuns(allDataDf.loc[index], previousBusesDf, None, True)
+                    firstIndexOfBus = index
+                else:
                     allDataDf.loc[index] = combineWithPreviousRuns(allDataDf.loc[index], previousBusesDf,
                                                                    allDataDf.loc[index - 1], False)
-                else:
-                    allDataDf.loc[index] = combineWithPreviousRuns(allDataDf.loc[index], previousBusesDf, None, True)
             if allDataDf['combined'][index]:
-                allDataDf.loc[index] = finalRelaventTimeStamp(allDataDf.loc[index], allDataDf.loc[firstIndexOfBus])
+                allDataDf.loc[index] = finalRelevantTimeStamp(allDataDf.loc[index], allDataDf.loc[firstIndexOfBus])
                 repeatedBusesDf = pd.concat([repeatedBusesDf, allDataDf.loc[[index]]])
                 previousBusesDf.drop(allDataDf['busNumber'][index])
                 continue
         # classify if stop
-        allDataDf['currentStop'][index] = isItAStop(allDataDf.loc[index])
+        allDataDf['fromStop'][index] = isItAStop(allDataDf.loc[index])
         # making sure it's the same bus
         if index == 0:
             allDataDf.loc[index] = resetData(allDataDf.loc[index])
             # timestamp is a stop
-            if pd.notnull(allDataDf['currentStop'][index]):
-                allDataDf.loc[index] = finalRelaventTimeStamp(allDataDf.loc[index], allDataDf.loc[firstIndexOfBus])
+            if pd.notnull(allDataDf['fromStop'][index]):
+                allDataDf.loc[index] = finalRelevantTimeStamp(allDataDf.loc[index], allDataDf.loc[firstIndexOfBus])
                 repeatedBusesDf = pd.concat([repeatedBusesDf, allDataDf.loc[[index]]])
             continue
         if allDataDf['busNumber'][index] != allDataDf['busNumber'][index - 1]:
             # we are not going to find what stop this bus is going to
             allDataDf['newBus'][index] = True
             if allDataDf['busNumber'][index - 1] not in list(repeatedBusesDf['busNumber']):
-                allDataDf.loc[index - 1] = finalRelaventTimeStamp(allDataDf.loc[index - 1],
+                allDataDf.loc[index - 1] = finalRelevantTimeStamp(allDataDf.loc[index - 1],
                                                                   allDataDf.loc[firstIndexOfBus],
                                                                   allDataDf['newBus'][index])
                 repeatedBusesDf = pd.concat([repeatedBusesDf, allDataDf.loc[[index - 1]]])
@@ -442,8 +444,8 @@ def findBusInformation(allDataDf, previousBusesDf, firstTimeRun):
                 index]).total_seconds()) * secondsToMilliseconds)
             allDataDf.loc[index] = distTimeFromLastStop(allDataDf.loc[index], allDataDf.loc[index - 1])
         # timestamp is a stop
-        if pd.notnull(allDataDf['currentStop'][index]):
-            allDataDf.loc[index] = finalRelaventTimeStamp(allDataDf.loc[index], allDataDf.loc[firstIndexOfBus])
+        if pd.notnull(allDataDf['fromStop'][index]):
+            allDataDf.loc[index] = finalRelevantTimeStamp(allDataDf.loc[index], allDataDf.loc[firstIndexOfBus])
             repeatedBusesDf = pd.concat([repeatedBusesDf, allDataDf.loc[[index]]])
     return repeatedBusesDf
 
@@ -451,6 +453,11 @@ def findBusInformation(allDataDf, previousBusesDf, firstTimeRun):
 def processDistanceData(repeatedBusesDf):
     repeatedBusesDf['toStop'] = repeatedBusesDf['toStop'].astype("string")
     previousBusesDf = repeatedBusesDf.copy()
+    # set fromStop to null for buses not at a stop
+    for bus in repeatedBusesDf.index:
+        if repeatedBusesDf.loc[bus, 'distanceFromStop'] < stopsInfoDf.loc[
+            (repeatedBusesDf.loc[(bus, 'fromStop')]), 'radius']:
+            repeatedBusesDf['currentStop'][bus] = repeatedBusesDf['fromStop'][bus]
     repeatedBusesDf.set_index('routeId', inplace=True)
     previousBusesDf.set_index('busNumber', inplace=True)
     return repeatedBusesDf, previousBusesDf
@@ -493,6 +500,15 @@ def fastestBus(repeatedBusesDf, allRoutesThatGoToStops):
                 for index, row in instance.iterrows():
                     if pd.isnull(row['toStop']):
                         continue
+                    if pd.notnull(row['currentStop']):
+                        if row['currentStop'] == key:
+                            stopsAway = None
+                            fastestBusMap[(key, allRoutesThatGoToStops[key][value])] = [index, key, row['lastUpdated'],
+                                                                                        row['timeFromStop'],
+                                                                                        stopsAway,
+                                                                                        row['distanceFromStop'], row['lng'],
+                                                                                        row['lat']]
+                            continue
                     stopsAway: int = numStopsAway(index, row['toStop'], key)
                     if fastestBusMap[(key, allRoutesThatGoToStops[key][value])] == float("inf"):
                         fastestBusMap[(key, allRoutesThatGoToStops[key][value])] = [index, key, row['lastUpdated'],
@@ -500,23 +516,24 @@ def fastestBus(repeatedBusesDf, allRoutesThatGoToStops):
                                                                                     stopsAway,
                                                                                     row['distanceFromStop'], row['lng'],
                                                                                     row['lat']]
-                    else:
-                        if fastestBusMap[(key, allRoutesThatGoToStops[key][value])][4] > stopsAway:
-                            fastestBusMap[(key, allRoutesThatGoToStops[key][value])] = [index, key,
-                                                                                        row['lastUpdated'],
-                                                                                        row['timeFromStop'],
-                                                                                        stopsAway,
-                                                                                        row['distanceFromStop'],
-                                                                                        row['lng'], row['lat']]
+                        continue
+                    if pd.isnull(fastestBusMap[(key, allRoutesThatGoToStops[key][value])][4]):
+                        continue
+                    if fastestBusMap[(key, allRoutesThatGoToStops[key][value])][4] > stopsAway:
+                        fastestBusMap[(key, allRoutesThatGoToStops[key][value])] = [index, key,
+                                                                                    row['lastUpdated'],
+                                                                                    row['timeFromStop'],
+                                                                                    stopsAway,
+                                                                                    row['distanceFromStop'],
+                                                                                    row['lng'], row['lat']]
                         if fastestBusMap[(key, allRoutesThatGoToStops[key][value])][4] == stopsAway and \
-                                fastestBusMap[(key, allRoutesThatGoToStops[key][value])][5] < row['timeFromStop']:
+                                fastestBusMap[(key, allRoutesThatGoToStops[key][value])][5] < row['distanceFromStop']:
                             fastestBusMap[(key, allRoutesThatGoToStops[key][value])] = [index, key,
                                                                                         row['lastUpdated'],
                                                                                         row['timeFromStop'],
                                                                                         stopsAway,
                                                                                         row['distanceFromStop'],
                                                                                         row['lng'], row['lat']]
-
     return fastestBusMap
 
 
@@ -526,8 +543,11 @@ def prevStopToTargetStop(busRoute, targetStop, lastUpdated, timeFromStop, stopsL
     targetIndex = routesDict[busRoute].index(targetStop)
     hourOfDay = lastUpdated.floor("H").hour
     dayOfWeek = lastUpdated.day_name()
+    if pd.isnull(stopsLeft):
+        avgTimeToTarget, distToTarget, timeToTarget, timeFromStop, distFromStop = None, None, None, None, None
+        return avgTimeToTarget, distToTarget, timeToTarget, timeFromStop, distFromStop
     # the point we are coming from
-    previousIndex = targetIndex - stopsLeft
+    previousIndex = targetIndex - stopsLeft - 1
     while previousIndex < targetIndex:
         # we are looking in our historical data for the median amount of time for from PI to PI +1
         avgTimeToTarget += (
@@ -551,10 +571,18 @@ def calculateTimeLeft(fastestBusMap):
                  'timeFromStop': -1, 'distanceFromStop': -1})
             continue
         else:
-            # param: busRoute, targetStop, currentStop, lastUpdated, timeFromStop, stopsLeft, distanceFromStop
+            # param: busRoute, targetStop, lastUpdated, timeFromStop, stopsLeft, distanceFromStop
             avgTimeToTarget, distToTarget, timeToTarget, timeFromStop, distFromStop = prevStopToTargetStop(
                 fastestBusMap[key][0], fastestBusMap[key][1], fastestBusMap[key][2],
                 fastestBusMap[key][3], fastestBusMap[key][4], fastestBusMap[key][5])
+            # only null if its already at a stop
+            if pd.isnull(avgTimeToTarget) | pd.isnull(distToTarget) | pd.isnull(timeToTarget) | pd.isnull(timeFromStop) | pd.isnull(distFromStop):
+                milliSecondsLate, trafficRatioGlobal, millisecondsUntilStop = 0, 0, 0
+                allStopsMapsList.append(
+                    {'stop': key[0], 'routeId': key[1], 'timeLeft': millisecondsUntilStop,
+                     'milliSecondsLate': milliSecondsLate,
+                     'trafficRatioGlobal': trafficRatioGlobal})
+                continue
             distLeft = distToTarget - distFromStop
             # we are checking the raw distance to the stop, and comparing it to the distance along the road. if it is shorter, we go to the backup, because our distance prediction is invalid
             distLeftBackup = distanceBetweenPoints(stopsInfoDf.loc[(fastestBusMap[key][1]), 'longitude'],
@@ -563,21 +591,15 @@ def calculateTimeLeft(fastestBusMap):
                                                    fastestBusMap[key][7])
             if distLeftBackup > distLeft:
                 distLeft = distLeftBackup
-            # if it's at a stop currently
-            if timeToTarget == 0:
-                milliSecondsLate = 0
-                trafficRatioGlobal = 0
-                millisecondsUntilStop = 0
-            else:
-                # assuming traffic will be normal after instance of traffic
-                trafficRatioGlobal = timeToTarget / avgTimeToTarget
-                millisecondsUntilStop = distLeft / (distToTarget / timeToTarget)
-                # expected time - realTime
-                milliSecondsLate = (distFromStop / (distToTarget / timeToTarget)) - timeFromStop
-            # the last two parameters are meant to be passed back for the createARoute
+            # assuming traffic will be normal after instance of traffic
+            trafficRatioGlobal = timeToTarget / avgTimeToTarget
+            millisecondsUntilStop = distLeft / (distToTarget / timeToTarget)
+            # expected time - realTime
+            milliSecondsLate = (distFromStop / (distToTarget / timeToTarget)) - timeFromStop
+        # the last two parameters are meant to be passed back for the createARoute
         allStopsMapsList.append(
             {'stop': key[0], 'routeId': key[1], 'timeLeft': millisecondsUntilStop, 'milliSecondsLate': milliSecondsLate,
-             'trafficRatioGlobal': trafficRatioGlobal, 'timeFromStop': timeFromStop, 'distanceFromStop': distFromStop})
+             'trafficRatioGlobal': trafficRatioGlobal})
     return allStopsMapsList
 
 
@@ -591,7 +613,6 @@ def timesToMongoDb(timeMapList):
 
 def main():
     previousBusesDf = None
-    numRecords = 5000
     firstTimeRun: bool = True
     while True:
         with concurrent.futures.ThreadPoolExecutor() as executor:
@@ -599,7 +620,7 @@ def main():
                 thread1 = executor.submit(callInTimingsData)
                 thread2 = executor.submit(getRoutesAndStops)
                 # returns global stopInfoDf and routesDict
-                thread3 = executor.submit(callInData, numRecords)
+                thread3 = executor.submit(callInData, 5000)
                 timingsDf = thread1.result()
                 thread2.result()
                 uniqueCombinations = uniqueStopsCombinations(timingsDf)
@@ -611,7 +632,7 @@ def main():
                 thread1 = executor.submit(tryDownloadingDistancesGroupBy, filteredTimingsDf)
                 thread4 = executor.submit(timingsToDb)
             else:
-                thread3 = executor.submit(callInData, numRecords)
+                thread3 = executor.submit(callInData, 500)
             allDataDf = thread3.result()
             allDataDf = prepareData(allDataDf)
             repeatedBusesDf = findBusInformation(allDataDf, previousBusesDf, firstTimeRun)
