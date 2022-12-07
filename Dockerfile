@@ -1,4 +1,4 @@
-FROM alpine:3.17.0
+FROM python:3.11.0-alpine3.17
 RUN apk add --no-cache --update \
     python3 python3-dev gcc \
     gfortran musl-dev g++ \
