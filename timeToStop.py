@@ -43,7 +43,9 @@ def getRoutesAndStops():
 
 class stopTimingsAndDistances:
     # about a months worth of data
-    numRecords: int = 555555
+    numRecords: int = 999999
+    # this is for correcting for the radius being too big
+    percentageCorrection = 0.1
 
     def __init__(self, data):
         self.stopGroupByDf = pd.DataFrame(data)
@@ -57,7 +59,8 @@ class stopTimingsAndDistances:
                 # append distance value
                 try:
                     distanceBetweenStops[(entireDf['fromStop'][value], entireDf['toStop'][value])].append(
-                        entireDf['distanceBetweenStops'][value])
+                        entireDf['distanceFromStop'][value] + (stopTimingsAndDistances.percentageCorrection*(
+                            stopsInfoDf.loc[(entireDf['fromStop'][value]), 'radius'])))
                 finally:
                     prevStopIndex = value
                     return entireDf, timingsDf, prevStopIndex, distanceBetweenStops
@@ -69,8 +72,7 @@ class stopTimingsAndDistances:
         prevStopIndex = None
         for value in entireDf.index:
             # if its invalid, continue and reset
-            if entireDf['routeId'][value] not in routesDict.keys() | entireDf['routeId'] in excludedRoutes:
-                entireDf.loc[value] = resetData(entireDf.loc[value])
+            if entireDf['routeId'][value] not in routesDict.keys() or entireDf['routeId'][value] in excludedRoutes:
                 continue
             # classify if stop
             entireDf['fromStop'][value] = isItAStop(entireDf.loc[value])
@@ -90,7 +92,7 @@ class stopTimingsAndDistances:
             if entireDf['busNumber'][value] != entireDf['busNumber'][value - 1]:
                 # we are not going to find what stop this bus is going to
                 entireDf['newBus'][value] = True
-                entireDf['distanceBetweenStops'][value] = 0
+                entireDf['distanceFromStop'][value] = 0
                 prevStopIndex = None
             else:
                 # pass in current timestamps cord and previous time stamps cord to distance function
@@ -176,7 +178,7 @@ def callInDistanceData():
     return distGBDf
 
 
-def uniqueStopsCombinations(timingsDf):
+def createUniqueStopsCombinations(timingsDf):
     timingsCalled = True
     distanceBetweenStops = {}
     for i, row in timingsDf.iterrows():
@@ -236,7 +238,7 @@ def processStopGroupBy():
     return
 
 
-def tryDownloadingDistancesGroupBy(timingsDf):
+def tryDownloadingDistancesGroupBy(timingsDf, distancesBetweenStops):
     # checking to make sure that dist exists
     try:
         # returns global vars
@@ -244,7 +246,7 @@ def tryDownloadingDistancesGroupBy(timingsDf):
     # if distData doesnt exist, calc it
     except:
         stopObj = stopTimingsAndDistances(None)
-        stopObj.stopGroupByMaker(timingsDf)
+        stopObj.stopGroupByMaker(timingsDf, distancesBetweenStops)
     processStopGroupBy()
     return
 
@@ -504,16 +506,15 @@ def fastestBus(repeatedBusesDf, allRoutesThatGoToStops):
                 for index, row in instance.iterrows():
                     if pd.isnull(row['toStop']):
                         continue
-                    if pd.notnull(row['currentStop']):
-                        if row['currentStop'] == key:
-                            stopsAway = None
-                            fastestBusMap[(key, allRoutesThatGoToStops[key][value])] = [index, key, row['lastUpdated'],
-                                                                                        row['timeFromStop'],
-                                                                                        stopsAway,
-                                                                                        row['distanceFromStop'],
-                                                                                        row['lng'],
-                                                                                        row['lat']]
-                            continue
+                    if pd.notnull(row['currentStop']) and row['currentStop'] == key and [index] == allRoutesThatGoToStops[key]:
+                        stopsAway = None
+                        fastestBusMap[(key, allRoutesThatGoToStops[key][value])] = [index, key, row['lastUpdated'],
+                                                                                    row['timeFromStop'],
+                                                                                    stopsAway,
+                                                                                    row['distanceFromStop'],
+                                                                                    row['lng'],
+                                                                                    row['lat']]
+                        continue
                     stopsAway: int = numStopsAway(index, row['toStop'], key)
                     if fastestBusMap[(key, allRoutesThatGoToStops[key][value])] == float("inf"):
                         fastestBusMap[(key, allRoutesThatGoToStops[key][value])] = [index, key, row['lastUpdated'],
@@ -544,7 +545,7 @@ def fastestBus(repeatedBusesDf, allRoutesThatGoToStops):
 
 
 def prevStopToTargetStop(busRoute, targetStop, lastUpdated, timeFromStop, stopsLeft, distFromStop):
-    timeToTarget, avgTimeToTarget, distToTarget = 0, 0, 0
+    milliSecondsAtStopTimeEstimate = 5000
     # the index in the order that we want to get to
     targetIndex = routesDict[busRoute].index(targetStop)
     hourOfDay = lastUpdated.floor("H").hour
@@ -552,6 +553,7 @@ def prevStopToTargetStop(busRoute, targetStop, lastUpdated, timeFromStop, stopsL
     if pd.isnull(stopsLeft):
         avgTimeToTarget, distToTarget, timeToTarget, timeFromStop, distFromStop = None, None, None, None, None
         return avgTimeToTarget, distToTarget, timeToTarget, timeFromStop, distFromStop
+    timeToTarget, avgTimeToTarget, distToTarget = milliSecondsAtStopTimeEstimate * stopsLeft, milliSecondsAtStopTimeEstimate * stopsLeft, 0
     # the point we are coming from
     previousIndex = targetIndex - stopsLeft - 1
     while previousIndex < targetIndex:
@@ -603,7 +605,6 @@ def calculateTimeLeft(fastestBusMap):
             millisecondsUntilStop = distLeft / (distToTarget / timeToTarget)
             # expected time - realTime
             milliSecondsLate = (distFromStop / (distToTarget / timeToTarget)) - timeFromStop
-        # the last two parameters are meant to be passed back for the createARoute
         allStopsMapsList.append(
             {'stop': key[0], 'routeId': key[1], 'timeLeft': millisecondsUntilStop, 'milliSecondsLate': milliSecondsLate,
              'trafficRatioGlobal': trafficRatioGlobal})
@@ -630,13 +631,13 @@ def main():
                 thread3 = executor.submit(callInData, 5000)
                 timingsDf = thread1.result()
                 thread2.result()
-                uniqueCombinations = uniqueStopsCombinations(timingsDf)
+                uniqueCombinations = createUniqueStopsCombinations(timingsDf)
                 filteredTimingsDf = filterTimeOutliers(timingsDf, uniqueCombinations)
                 # makes global groupBy variables
                 thread1 = executor.submit(makeGroupBy, filteredTimingsDf)
                 thread2 = executor.submit(findRoutesPerStop)
                 thread1.result()
-                thread1 = executor.submit(tryDownloadingDistancesGroupBy, filteredTimingsDf)
+                thread1 = executor.submit(tryDownloadingDistancesGroupBy, filteredTimingsDf, uniqueCombinations)
                 thread4 = executor.submit(timingsToDb)
             else:
                 thread3 = executor.submit(callInData, 500)
@@ -655,6 +656,7 @@ def main():
             firstTimeRun = False
             thread4.result()
 
+            print(allStopsMapList)
 
 if __name__ == "__main__":
     main()
