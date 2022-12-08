@@ -637,9 +637,15 @@ def calculateTimeLeft(fastestBusMap):
 
 def timesToMongoDb(timeMapList):
     collection = db['timetostop']
-    collection.delete_many({})
+    
+
+        
     for bus in range(len(timeMapList)):
-        collection.insert_one(timeMapList[bus])
+        if(not collection.find_one({"stop":timeMapList[bus]['stop'],"routeId":timeMapList[bus]['routeId']})):
+            collection.insert_one(timeMapList[bus])
+            continue
+        collection.update_one({"stop":timeMapList[bus]['stop'],"routeId":timeMapList[bus]['routeId']},{"$set":timeMapList[bus]})
+        
     return
 
 
