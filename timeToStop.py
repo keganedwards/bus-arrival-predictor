@@ -680,8 +680,6 @@ def main():
             firstTimeRun = False
             thread4.result()
 
-            print(allStopsMapList)
-
 
 if __name__ == "__main__":
     main()
