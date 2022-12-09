@@ -198,41 +198,60 @@ def createUniqueStopsCombinations(timingsDf):
     return distanceBetweenStops
 
 
-def filterTimeOutliers(timings, distanceBetweenStops):
+def filterTimeOutliers(timings):
     timingsDfsList = []
     # eg (fromstop, tostop)
-    for key in distanceBetweenStops.keys():
-        # filtering for instances of the fromstop to stop combo, and filtering out excluded routes
-        toFromStopDf = timings[(timings['fromStop'] == key[0]) & (timings['toStop'] == key[1]) & (
-            ~timings['routeId'].isin(excludedRoutes))]
-        if toFromStopDf.empty:
+    for index in timeByHourGBDf.index:
+        # filtering for instances of the from-stop to stop combo, and filtering out excluded routes
+        fromToHourDayDf = timings[
+            (timings['fromStop'] == index[0]) &
+            (timings['toStop'] == index[1]) &
+            (timings['hourOfDay'] == index[2]) &
+            (timings['dayOfWeek'] == index[3]) &
+            (~timings['routeId'].isin(excludedRoutes))
+        ]
+        if fromToHourDayDf.empty:
             continue
-        lowerLimitPercentile, upperLimitPercentile, rangeFactor = 25, 75, 1.5
-        upperLimit = np.percentile(toFromStopDf['timeTaken'], upperLimitPercentile)
-        lowerLimit = np.percentile(toFromStopDf['timeTaken'], lowerLimitPercentile)
+        lowerLimitPercentile, upperLimitPercentile, rangeFactor = 5, 40, 0
+        upperLimit = np.percentile(fromToHourDayDf['timeTaken'], upperLimitPercentile)
+        lowerLimit = np.percentile(fromToHourDayDf['timeTaken'], lowerLimitPercentile)
         interquartileRange = upperLimit - lowerLimit
-        timingsDfsList.append(
-            toFromStopDf[
-                (toFromStopDf['timeTaken'] < upperLimit + (rangeFactor * interquartileRange)) &
-                (toFromStopDf['timeTaken'] > lowerLimit - (rangeFactor * interquartileRange))
-                ]
-        )
-    # after taking out outliers, recombine
-    filteredTimingsDf = pd.concat(timingsDfsList)
-    filteredTimingsDf.reset_index(inplace=True, drop=True)
+        # if there is 1 entry, the iqr will be zero
+        if interquartileRange == 0:
+            timeByHourGBDf.loc[index]['timeTaken'] = np.median(fromToHourDayDf['timeTaken'])
+        else:
+            filteredTimesDf = fromToHourDayDf[
+                (fromToHourDayDf['timeTaken'] < upperLimit + (rangeFactor * interquartileRange)) &
+                (fromToHourDayDf['timeTaken'] > lowerLimit - (rangeFactor * interquartileRange))
+            ]
+            if not filteredTimesDf.empty:
+                timeByHourGBDf.loc[index]['timeTaken'] = np.median(filteredTimesDf['timeTaken'])
+                timingsDfsList.append(filteredTimesDf)
+    createAndProcessGlobalTimeGBDf(timingsDfsList)
+    return
+
+
+def createAndProcessGlobalTimeGBDf(timingsDfsList):
+    global globalTimeGBDf
+    globalTimingsDf = pd.concat(timingsDfsList)
+    globalTimingsDf[['fromStop', 'toStop']] = globalTimingsDf[['fromStop', 'toStop']].astype('string')
+    globalTimeGBDf = globalTimingsDf.groupby(['fromStop', 'toStop'], as_index=False, dropna=False)[
+        ['timeTaken']].median()
+    globalTimeGBDf.set_index(['fromStop', 'toStop'], inplace=True)
+    return
+
+def addFeaturesToGroupBy(filteredTimingsDf):
+    filteredTimingsDf['hourOfDay'] = filteredTimingsDf["timeStamp"].dt.floor("H").dt.hour
+    filteredTimingsDf['dayOfWeek'] = filteredTimingsDf['timeStamp'].dt.day_name()
     return filteredTimingsDf
 
 
-def makeGroupBy(filteredTimingsDf):
-    global timeByHourGBDf, globalTimeGBDf
-    filteredTimingsDf['hourOfDay'] = filteredTimingsDf["timeStamp"].dt.floor("H").dt.hour
-    filteredTimingsDf['dayOfWeek'] = filteredTimingsDf['timeStamp'].dt.day_name()
-    globalTimeGBDf = filteredTimingsDf.groupby(['fromStop', 'toStop'], as_index=False, dropna=False)[
-        ['timeTaken']].median()
+def maketimeByHourGBDf(filteredTimingsDf):
+    global timeByHourGBDf
     timeByHourGBDf = \
         filteredTimingsDf.groupby(['fromStop', 'toStop', 'hourOfDay', 'dayOfWeek'], as_index=False, dropna=False)[
             'timeTaken'].median()
-    return timeByHourGBDf, globalTimeGBDf
+    return timeByHourGBDf
 
 
 def timingsToDb():
@@ -244,15 +263,13 @@ def timingsToDb():
 
 def processStopGroupBy():
     distGBDf[['fromStop', 'toStop']] = distGBDf[['fromStop', 'toStop']].astype('string')
-    timeByHourGBDf[['fromStop', 'toStop']] = timeByHourGBDf[['fromStop', 'toStop']].astype('string')
-    globalTimeGBDf[['fromStop', 'toStop']] = globalTimeGBDf[['fromStop', 'toStop']].astype('string')
     distGBDf.set_index(['fromStop', 'toStop'], inplace=True)
+    timeByHourGBDf[['fromStop', 'toStop']] = timeByHourGBDf[['fromStop', 'toStop']].astype('string')
     timeByHourGBDf.set_index(['fromStop', 'toStop', 'hourOfDay', 'dayOfWeek'], inplace=True)
-    globalTimeGBDf.set_index(['fromStop', 'toStop'], inplace=True)
     return
 
 
-def tryDownloadingDistancesGroupBy(timingsDf, distancesBetweenStops):
+def tryDownloadingDistancesGroupBy(timingsDf):
     global distGBDf
     # checking to make sure that dist exists
     try:
@@ -261,6 +278,7 @@ def tryDownloadingDistancesGroupBy(timingsDf, distancesBetweenStops):
     # if distData doesnt exist, calc it
     except:
         stopObj = stopTimingsAndDistances(None)
+        distancesBetweenStops = createUniqueStopsCombinations(timingsDf)
         stopObj.stopGroupByMaker(timingsDf, distancesBetweenStops)
     processStopGroupBy()
     return
@@ -656,14 +674,14 @@ def main():
                 # returns global stopInfoDf and routesDict
                 thread3 = executor.submit(callInData, 5000)
                 timingsDf = thread1.result()
+                filteredTimingsDf = addFeaturesToGroupBy(timingsDf)
+                maketimeByHourGBDf(filteredTimingsDf)
+                thread1 = executor.submit(tryDownloadingDistancesGroupBy, timingsDf)
                 thread2.result()
-                uniqueCombinations = createUniqueStopsCombinations(timingsDf)
-                filteredTimingsDf = filterTimeOutliers(timingsDf, uniqueCombinations)
-                # makes global groupBy variables
-                thread1 = executor.submit(makeGroupBy, filteredTimingsDf)
-                thread2 = executor.submit(findRoutesPerStop)
+                # returns stopGroupBy
                 thread1.result()
-                thread1 = executor.submit(tryDownloadingDistancesGroupBy, filteredTimingsDf, uniqueCombinations)
+                filterTimeOutliers(timingsDf)
+                thread2 = executor.submit(findRoutesPerStop)
                 thread4 = executor.submit(timingsToDb)
             else:
                 thread3 = executor.submit(callInData, 500)
@@ -675,12 +693,12 @@ def main():
             fastestBusMap = fastestBus(repeatedBusesDf, allRoutesThatGoToStopsMap)
             # returns routesPerStop
             thread2.result()
-            # returns stopGroupBy
-            thread1.result()
             allStopsMapList = calculateTimeLeft(fastestBusMap)
             timesToMongoDb(allStopsMapList)
             firstTimeRun = False
             thread4.result()
+
+            print(allStopsMapList)
 
 
 if __name__ == "__main__":
