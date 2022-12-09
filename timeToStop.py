@@ -714,7 +714,7 @@ def main():
                 # returns stopGroupBy
                 thread1 = executor.submit(findRoutesPerStop)
             else:
-                thread2 = executor.submit(callInData, 500)
+                thread2 = executor.submit(callInData, 1250)
             allDataDf = thread2.result()
             allDataDf = prepareData(allDataDf)
             repeatedBusesDf = findBusInformation(allDataDf, previousBusesDf, firstTimeRun)
@@ -726,7 +726,7 @@ def main():
             allStopsMapList = calculateTimeLeft(fastestBusMap)
             timesToMongoDb(allStopsMapList)
             firstTimeRun = False
-
+            
 
 if __name__ == "__main__":
     main()
