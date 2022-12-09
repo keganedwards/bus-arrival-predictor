@@ -218,14 +218,14 @@ def filterTimeOutliers(timings):
         interquartileRange = upperLimit - lowerLimit
         # if there is 1 entry, the iqr will be zero
         if interquartileRange == 0:
-            timeByHourGBDf.loc[index]['timeTaken'] = np.median(fromToHourDayDf['timeTaken'])
+            timeByHourGBDf.loc[[index]][['timeTaken']] = np.median(fromToHourDayDf['timeTaken'])
         else:
             filteredTimesDf = fromToHourDayDf[
                 (fromToHourDayDf['timeTaken'] < upperLimit + (rangeFactor * interquartileRange)) &
                 (fromToHourDayDf['timeTaken'] > lowerLimit - (rangeFactor * interquartileRange))
             ]
             if not filteredTimesDf.empty:
-                timeByHourGBDf.loc[index]['timeTaken'] = np.median(filteredTimesDf['timeTaken'])
+                timeByHourGBDf.loc[[index]][['timeTaken']] = np.median(fromToHourDayDf['timeTaken'])
                 timingsDfsList.append(filteredTimesDf)
     createAndProcessGlobalTimeGBDf(timingsDfsList)
     return
@@ -258,6 +258,12 @@ def timingsToDb():
     collection = db['averageTimingsBetweenStops']
     collection.delete_many({})
     collection.insert_many(timeByHourGBDf.to_dict('records'))
+    return
+
+def globalTimingsToDb():
+    collection = db['globalAverageTimings']
+    collection.delete_many({})
+    collection.insert_many(globalTimeGBDf.to_dict('records'))
     return
 
 
@@ -683,6 +689,7 @@ def main():
                 filterTimeOutliers(timingsDf)
                 thread2 = executor.submit(findRoutesPerStop)
                 thread4 = executor.submit(timingsToDb)
+                thread4.result()
             else:
                 thread3 = executor.submit(callInData, 500)
             allDataDf = thread3.result()
@@ -696,7 +703,7 @@ def main():
             allStopsMapList = calculateTimeLeft(fastestBusMap)
             timesToMongoDb(allStopsMapList)
             firstTimeRun = False
-            thread4.result()
+
 
             print(allStopsMapList)
 
