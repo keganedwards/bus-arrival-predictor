@@ -9,5 +9,5 @@ requests==2.28.1
 geopy==2.3.0
 pymongo==4.2.0
 attrs==22.1.0
-tornado==6.2
+tornado>=6.5.5
 Jinja2==3.1.2
